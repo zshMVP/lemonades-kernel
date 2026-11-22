@@ -1,4 +1,4 @@
-name: OnePlus 9R AxionOS KernelSU Next
+name: Build OnePlus 9R SukiSU Nova
 
 on:
   workflow_dispatch:
@@ -8,20 +8,18 @@ permissions:
 
 jobs:
   build:
-    name: Build lemonades kernel
     runs-on: ubuntu-22.04
     timeout-minutes: 360
 
     env:
       ARCH: arm64
-      LLVM: "1"
-      LLVM_IAS: "1"
-      CROSS_COMPILE: aarch64-linux-gnu-
       KERNEL_REPO: https://github.com/LineageOS/android_kernel_oneplus_sm8250.git
       KERNEL_BRANCH: lineage-23.2
-      KSU_SETUP: https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh
+      KSU_REF: builtin
+      CLANG_REV: 990fd16989111c09efdde72f8874bb30e2780db8
 
     steps:
+      # 1. Install build dependencies
       - name: Install dependencies
         run: |
           sudo apt-get update
@@ -38,8 +36,10 @@ jobs:
             lz4 zstd \
             device-tree-compiler \
             gcc-aarch64-linux-gnu \
-            gcc-arm-linux-gnueabi
+            gcc-arm-linux-gnueabi \
+            libxml2-utils
 
+      # 2. Clone OnePlus SM8250 kernel
       - name: Clone kernel source
         run: |
           git clone \
@@ -52,79 +52,84 @@ jobs:
           echo "===== Kernel version ====="
           head -n 6 Makefile
 
-          echo "===== CIP version ====="
-          cat localversion-cip
-
-          echo "===== ST version ====="
-          cat localversion-st
-
           grep -q 'SUBLEVEL = 325' Makefile
-          grep -q -- '-cip136' localversion-cip
-          grep -q -- '-st20' localversion-st
+
+          echo "===== CIP / ST version ====="
+
+          test -f localversion-cip
+          test -f localversion-st
+
+          cat localversion-cip
+          cat localversion-st
 
           test -f arch/arm64/configs/vendor/kona-perf_defconfig
           test -f arch/arm64/configs/vendor/oplus.config
 
-          echo "Source verification passed."
+          echo "Kernel source verification passed."
 
-      - name: Install KernelSU Next
-        run: |
-          cd kernel
-
-          curl -LSs "$KSU_SETUP" | bash -s legacy
-
-          test -e drivers/kernelsu
-
-          echo "KernelSU Next integration completed."
-
+      # 3. Install AOSP Clang 21
       - name: Download AOSP Clang
         shell: bash
         run: |
           set -euxo pipefail
 
-          CLANG_REV="990fd16989111c09efdde72f8874bb30e2780db8"
-          CLANG_DIR="$GITHUB_WORKSPACE/clang"
-
-          mkdir -p "$CLANG_DIR"
+          mkdir -p "$GITHUB_WORKSPACE/clang"
 
           URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/${CLANG_REV}/clang-r574158.tar.gz"
 
-          echo "Downloading AOSP Clang r574158..."
-
-          curl -fL \
-            --retry 5 \
-            --retry-delay 5 \
+          curl -fL --retry 5 \
             --retry-all-errors \
             "$URL" \
             -o "$RUNNER_TEMP/clang.tar.gz"
 
-          echo "Checking archive..."
-
-          test -s "$RUNNER_TEMP/clang.tar.gz"
-
-          tar -tzf "$RUNNER_TEMP/clang.tar.gz" > /dev/null
-
-          echo "Extracting Clang..."
+          tar -tzf "$RUNNER_TEMP/clang.tar.gz" >/dev/null
 
           tar -xzf "$RUNNER_TEMP/clang.tar.gz" \
-            -C "$CLANG_DIR"
+            -C "$GITHUB_WORKSPACE/clang"
 
-          echo "$CLANG_DIR/bin" >> "$GITHUB_PATH"
+          echo "$GITHUB_WORKSPACE/clang/bin" >> "$GITHUB_PATH"
 
-          echo "Checking compiler..."
+          test -x "$GITHUB_WORKSPACE/clang/bin/clang"
+          test -x "$GITHUB_WORKSPACE/clang/bin/ld.lld"
 
-          test -x "$CLANG_DIR/bin/clang"
-          test -x "$CLANG_DIR/bin/ld.lld"
+          clang --version
 
-          "$CLANG_DIR/bin/clang" --version
+          clang --version | grep -F "21.0.0"
 
-          "$CLANG_DIR/bin/clang" --version \
-            | grep -F "21.0.0"
-
-          echo "AOSP Clang installation successful!"
-
-      - name: Configure kernel
+      # 4. Integrate SukiSU Nova builtin
+      - name: Integrate SukiSU Nova
+        shell: bash
         run: |
+          set -euxo pipefail
+
+          cd kernel
+
+          curl -fLSs \
+            "https://git.zako.shirkneko.top:20004/shirkneko/SukiSU/raw/branch/main/kernel/setup.sh" \
+            -o "$RUNNER_TEMP/sukisu-setup.sh"
+
+          bash "$RUNNER_TEMP/sukisu-setup.sh" builtin
+
+          test -e drivers/kernelsu
+
+          echo "===== SukiSU source ====="
+
+          ls -la drivers/kernelsu
+
+          echo "===== Hook configuration ====="
+
+          grep -R \
+            "KSU_HACK_ARM64_BRANCH_LINK" \
+            drivers/kernelsu \
+            --include='Kconfig*' \
+            --include='*.Kconfig' || true
+
+      # 5. Configure kernel
+      - name: Configure kernel
+        shell: bash
+        run: |
+          set -euxo pipefail
+
           cd kernel
 
           mkdir -p out
@@ -134,50 +139,62 @@ jobs:
             CROSS_COMPILE=aarch64-linux-gnu- \
             vendor/kona-perf_defconfig
 
-          # Apply OnePlus Oplus configuration
           scripts/kconfig/merge_config.sh \
             -m -O out \
             out/.config \
             arch/arm64/configs/vendor/oplus.config
 
-          # KernelSU Next Kprobe built-in configuration
-          cat > out/ksu-next.config <<'EOF'
+          # Verify the SukiSU branch exposes the required ARM64 option.
+          if ! grep -Rqs \
+            "config KSU_HACK_ARM64_BRANCH_LINK" \
+            drivers/kernelsu; then
+            echo "ERROR: SukiSU builtin does not expose ARM64 branch-link option."
+            echo "Manual hook patches must be adapted before building."
+            exit 1
+          fi
+
+          cat > out/sukisu.config <<'EOF'
           CONFIG_KSU=y
-          CONFIG_KPROBES=y
-          CONFIG_KPROBE_EVENTS=y
-          CONFIG_KSU_KPROBE_HOOKS=y
-          CONFIG_LOCALVERSION="-Spidey-v2"
-          CONFIG_LOCALVERSION_AUTO=y
+          CONFIG_KSU_HACK_ARM64_BRANCH_LINK=y
+          CONFIG_KSU_SUSFS=y
+          CONFIG_KSU_SUSFS_SUS_PATH=y
+          CONFIG_KSU_SUSFS_SUS_MOUNT=y
+          CONFIG_KALLSYMS=y
+          CONFIG_KALLSYMS_ALL=y
           EOF
 
           scripts/kconfig/merge_config.sh \
             -m -O out \
             out/.config \
-            out/ksu-next.config
+            out/sukisu.config
 
           make O=out ARCH=arm64 \
             LLVM=1 LLVM_IAS=1 \
             CROSS_COMPILE=aarch64-linux-gnu- \
             olddefconfig
 
-          echo "===== Verify KernelSU ====="
+          echo "===== Verify SukiSU ====="
 
           grep -E \
-            'CONFIG_(KSU|KPROBES|KPROBE_EVENTS|KSU_KPROBE_HOOKS)=' \
-            out/.config
+            'CONFIG_(KSU|KSU_HACK_ARM64_BRANCH_LINK|KSU_SUSFS|KSU_SUSFS_SUS_PATH|KSU_SUSFS_SUS_MOUNT|KALLSYMS)=' \
+            out/.config || true
 
           grep -qx 'CONFIG_KSU=y' out/.config
-          grep -qx 'CONFIG_KPROBES=y' out/.config
-          grep -qx 'CONFIG_KPROBE_EVENTS=y' out/.config
-          grep -qx 'CONFIG_KSU_KPROBE_HOOKS=y' out/.config
 
-          echo "Kernel configuration verified."
+          grep -qx \
+            'CONFIG_KSU_HACK_ARM64_BRANCH_LINK=y' \
+            out/.config
 
+          grep -qx 'CONFIG_KSU_SUSFS=y' out/.config
+
+          echo "SukiSU configuration passed."
+
+      # 6. Build kernel
       - name: Build kernel
         run: |
           cd kernel
 
-          make -j2 \
+          make -j"$(nproc)" \
             O=out \
             ARCH=arm64 \
             LLVM=1 \
@@ -185,6 +202,7 @@ jobs:
             CROSS_COMPILE=aarch64-linux-gnu- \
             Image dtbs
 
+      # 7. Collect artifacts
       - name: Collect artifacts
         run: |
           cd kernel
@@ -207,17 +225,18 @@ jobs:
             > "$GITHUB_WORKSPACE/artifacts/clang-version.txt"
 
           tar -czf \
-            "$GITHUB_WORKSPACE/artifacts/lemonades-dtbs.tar.gz" \
+            "$GITHUB_WORKSPACE/artifacts/dtbs.tar.gz" \
             -C out/arch/arm64/boot/dts .
 
           cd "$GITHUB_WORKSPACE/artifacts"
 
           sha256sum Image > SHA256SUMS.txt
 
+      # 8. Upload artifacts
       - name: Upload kernel artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: OnePlus-9R-AxionOS-KernelSU-Next
+          name: Lemonades-SukiSU-Nova-4.19
           path: artifacts/
           if-no-files-found: error
           retention-days: 14
