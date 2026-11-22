@@ -8,7 +8,7 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     timeout-minutes: 360
 
     env:
@@ -73,28 +73,57 @@ jobs:
         run: |
           set -euxo pipefail
 
-          mkdir -p "$GITHUB_WORKSPACE/clang"
+          CLANG_DIR="$GITHUB_WORKSPACE/clang"
+          CLANG_BIN="$CLANG_DIR/bin"
+
+          mkdir -p "$CLANG_DIR"
 
           URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/${CLANG_REV}/clang-r574158.tar.gz"
 
-          curl -fL --retry 5 \
+          echo "Downloading AOSP Clang r574158..."
+
+          curl -fL \
+            --retry 5 \
+            --retry-delay 5 \
             --retry-all-errors \
             "$URL" \
             -o "$RUNNER_TEMP/clang.tar.gz"
 
+          echo "Checking archive..."
+
+          test -s "$RUNNER_TEMP/clang.tar.gz"
+
           tar -tzf "$RUNNER_TEMP/clang.tar.gz" >/dev/null
 
+          echo "Extracting..."
+
           tar -xzf "$RUNNER_TEMP/clang.tar.gz" \
-            -C "$GITHUB_WORKSPACE/clang"
+            -C "$CLANG_DIR"
 
-          echo "$GITHUB_WORKSPACE/clang/bin" >> "$GITHUB_PATH"
+          # Important: update PATH immediately
+          export PATH="$CLANG_BIN:$PATH"
 
-          test -x "$GITHUB_WORKSPACE/clang/bin/clang"
-          test -x "$GITHUB_WORKSPACE/clang/bin/ld.lld"
+          # Also expose it to subsequent Actions steps
+          echo "$CLANG_BIN" >> "$GITHUB_PATH"
 
-          clang --version
+          echo "===== Compiler location ====="
 
-          clang --version | grep -F "21.0.0"
+          which clang
+
+          echo "===== Compiler version ====="
+
+          "$CLANG_BIN/clang" --version
+
+          echo "===== Verify compiler ====="
+
+          "$CLANG_BIN/clang" --version \
+            | grep -F "21.0.0"
+
+          test -x "$CLANG_BIN/ld.lld"
+
+          "$CLANG_BIN/ld.lld" --version
+
+          echo "AOSP Clang r574158 installation successful!"
 
       # 4. Integrate SukiSU Nova builtin
       - name: Integrate SukiSU Nova
