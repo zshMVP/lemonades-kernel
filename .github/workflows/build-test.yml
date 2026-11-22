@@ -1,0 +1,194 @@
+name: OnePlus 9R AxionOS KernelSU Next
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build lemonades kernel
+    runs-on: ubuntu-22.04
+    timeout-minutes: 360
+
+    env:
+      ARCH: arm64
+      LLVM: "1"
+      LLVM_IAS: "1"
+      CROSS_COMPILE: aarch64-linux-gnu-
+      KERNEL_REPO: https://github.com/LineageOS/android_kernel_oneplus_sm8250.git
+      KERNEL_BRANCH: lineage-23.2
+      KSU_SETUP: https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh
+
+    steps:
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+
+          sudo apt-get install -y \
+            git curl wget \
+            build-essential \
+            bc bison flex \
+            libssl-dev libelf-dev \
+            libncurses-dev \
+            python3 python-is-python3 \
+            rsync cpio \
+            zip unzip \
+            lz4 zstd \
+            device-tree-compiler \
+            gcc-aarch64-linux-gnu \
+            gcc-arm-linux-gnueabi
+
+      - name: Clone kernel source
+        run: |
+          git clone \
+            --depth=1 \
+            --branch "$KERNEL_BRANCH" \
+            "$KERNEL_REPO" kernel
+
+          cd kernel
+
+          echo "===== Kernel version ====="
+          head -n 6 Makefile
+
+          echo "===== CIP version ====="
+          cat localversion-cip
+
+          echo "===== ST version ====="
+          cat localversion-st
+
+          grep -q 'SUBLEVEL = 325' Makefile
+          grep -q -- '-cip136' localversion-cip
+          grep -q -- '-st20' localversion-st
+
+          test -f arch/arm64/configs/vendor/kona-perf_defconfig
+          test -f arch/arm64/configs/vendor/oplus.config
+
+          echo "Source verification passed."
+
+      - name: Install KernelSU Next
+        run: |
+          cd kernel
+
+          curl -LSs "$KSU_SETUP" | bash -s legacy
+
+          test -e drivers/kernelsu
+
+          echo "KernelSU Next integration completed."
+
+      - name: Download AOSP Clang
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/clang"
+
+          curl -fL \
+            "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/android16-qpr2-release/clang-r574158.tar.gz" \
+            -o clang.tar.gz
+
+          tar -xzf clang.tar.gz \
+            -C "$GITHUB_WORKSPACE/clang"
+
+          echo "$GITHUB_WORKSPACE/clang/bin" >> "$GITHUB_PATH"
+
+          clang --version
+
+          clang --version | grep -q '21.0.0'
+
+      - name: Configure kernel
+        run: |
+          cd kernel
+
+          mkdir -p out
+
+          make O=out ARCH=arm64 \
+            LLVM=1 LLVM_IAS=1 \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            vendor/kona-perf_defconfig
+
+          # Apply OnePlus Oplus configuration
+          scripts/kconfig/merge_config.sh \
+            -m -O out \
+            out/.config \
+            arch/arm64/configs/vendor/oplus.config
+
+          # KernelSU Next Kprobe built-in configuration
+          cat > out/ksu-next.config <<'EOF'
+          CONFIG_KSU=y
+          CONFIG_KPROBES=y
+          CONFIG_KPROBE_EVENTS=y
+          CONFIG_KSU_KPROBE_HOOKS=y
+          CONFIG_LOCALVERSION="-Spidey-v2"
+          CONFIG_LOCALVERSION_AUTO=y
+          EOF
+
+          scripts/kconfig/merge_config.sh \
+            -m -O out \
+            out/.config \
+            out/ksu-next.config
+
+          make O=out ARCH=arm64 \
+            LLVM=1 LLVM_IAS=1 \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            olddefconfig
+
+          echo "===== Verify KernelSU ====="
+
+          grep -E \
+            'CONFIG_(KSU|KPROBES|KPROBE_EVENTS|KSU_KPROBE_HOOKS)=' \
+            out/.config
+
+          grep -qx 'CONFIG_KSU=y' out/.config
+          grep -qx 'CONFIG_KPROBES=y' out/.config
+          grep -qx 'CONFIG_KPROBE_EVENTS=y' out/.config
+          grep -qx 'CONFIG_KSU_KPROBE_HOOKS=y' out/.config
+
+          echo "Kernel configuration verified."
+
+      - name: Build kernel
+        run: |
+          cd kernel
+
+          make -j2 \
+            O=out \
+            ARCH=arm64 \
+            LLVM=1 \
+            LLVM_IAS=1 \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            Image dtbs
+
+      - name: Collect artifacts
+        run: |
+          cd kernel
+
+          mkdir -p "$GITHUB_WORKSPACE/artifacts"
+
+          cp out/arch/arm64/boot/Image \
+            "$GITHUB_WORKSPACE/artifacts/Image"
+
+          cp out/.config \
+            "$GITHUB_WORKSPACE/artifacts/kernel.config"
+
+          make -s O=out ARCH=arm64 kernelrelease \
+            > "$GITHUB_WORKSPACE/artifacts/kernel-version.txt"
+
+          git rev-parse HEAD \
+            > "$GITHUB_WORKSPACE/artifacts/kernel-commit.txt"
+
+          clang --version \
+            > "$GITHUB_WORKSPACE/artifacts/clang-version.txt"
+
+          tar -czf \
+            "$GITHUB_WORKSPACE/artifacts/lemonades-dtbs.tar.gz" \
+            -C out/arch/arm64/boot/dts .
+
+          cd "$GITHUB_WORKSPACE/artifacts"
+
+          sha256sum Image > SHA256SUMS.txt
+
+      - name: Upload kernel artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: OnePlus-9R-AxionOS-KernelSU-Next
+          path: artifacts/
+          if-no-files-found: error
+          retention-days: 14
