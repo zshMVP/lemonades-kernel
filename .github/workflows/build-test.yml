@@ -241,6 +241,19 @@ jobs:
             --include='*.h' \
             --include='*.c' || true
 
+          echo "========== I. Search all SukiSU hook symbols =========="
+          grep -RniE 'ksu_handle_newfstat_ret|ksu_handle_post_execveat|ksu_handle_sys_reboot|ksu_handle_faccessat|ksu_handle_stat' drivers/kernelsu --include='*.h' --include='*.c' || true
+
+          echo "========== J. Check getname in open.c =========="
+          grep -n -A12 -B8 'getname' fs/open.c
+
+          echo "========== K. Check stat syscall definitions =========="
+          grep -n -A18 -B5 'SYSCALL_DEFINE4(newfstatat' fs/stat.c
+          grep -n -A18 -B5 'SYSCALL_DEFINE2(newfstat' fs/stat.c
+
+          echo "========== L. Check execve hook declarations =========="
+          grep -Rni 'ksu_handle_post_execveat' drivers/kernelsu --include='*.h' --include='*.c' || true
+
       # 5. Configure kernel      
       - name: Configure kernel
         shell: bash
