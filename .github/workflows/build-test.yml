@@ -168,49 +168,48 @@ jobs:
           echo "===== Hook function declarations ====="
 
           echo "===== SukiSU Hook headers ====="
+          find -L drivers/kernelsu \
+            -type f \
+            \( -name '*.h' -o -name '*.c' \) \
+            | sort | head -100
 
-find -L drivers/kernelsu \
-  -type f \
-  \( -name '*.h' -o -name '*.c' \) \
-  | sort | head -100
+            echo "===== SukiSU Hook declarations ====="
 
-echo "===== SukiSU Hook declarations ====="
+          grep -RniE \
+            'ksu_handle_execveat|ksu_handle_faccessat|ksu_handle_stat|ksu_handle_newfstat_ret|ksu_handle_sys_reboot|ksu_handle_kernel_umount' \
+            drivers/kernelsu \
+            --include='*.h' \
+            --include='*.c' || true
 
-grep -RniE \
-  'ksu_handle_execveat|ksu_handle_faccessat|ksu_handle_stat|ksu_handle_newfstat_ret|ksu_handle_sys_reboot|ksu_handle_kernel_umount' \
-  drivers/kernelsu \
-  --include='*.h' \
-  --include='*.c' || true
+          echo "===== Kernel execve functions ====="
 
-echo "===== Kernel execve functions ====="
+          grep -nE \
+            'do_execveat_common|do_execve_common' \
+            fs/exec.c
 
-grep -nE \
-  'do_execveat_common|do_execve_common' \
-  fs/exec.c
+          echo "===== Kernel faccessat functions ====="
 
-echo "===== Kernel faccessat functions ====="
+          grep -nE \
+            'SYSCALL_DEFINE.*faccessat|do_faccessat' \
+            fs/open.c
 
-grep -nE \
-  'SYSCALL_DEFINE.*faccessat|do_faccessat' \
-  fs/open.c
+          echo "===== Kernel stat functions ====="
 
-echo "===== Kernel stat functions ====="
+          grep -nE \
+            'SYSCALL_DEFINE.*newfstat|SYSCALL_DEFINE.*fstat|cp_new_stat' \
+            fs/stat.c
 
-grep -nE \
-  'SYSCALL_DEFINE.*newfstat|SYSCALL_DEFINE.*fstat|cp_new_stat' \
-  fs/stat.c
+          echo "===== Kernel reboot functions ====="
 
-echo "===== Kernel reboot functions ====="
+          grep -nE \
+            'SYSCALL_DEFINE.*reboot' \
+            kernel/reboot.c
 
-grep -nE \
-  'SYSCALL_DEFINE.*reboot' \
-  kernel/reboot.c
+          echo "===== Android 16 stat return context ====="
 
-echo "===== Android 16 stat return context ====="
-
-grep -n -A18 -B5 \
-  'SYSCALL_DEFINE2(newfstat' \
-  fs/stat.c || true
+          grep -n -A18 -B5 \
+            'SYSCALL_DEFINE2(newfstat' \
+            fs/stat.c || true
 
           echo "SukiSU source inspection completed."
 
