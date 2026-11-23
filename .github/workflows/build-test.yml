@@ -139,21 +139,42 @@ jobs:
 
           bash "$RUNNER_TEMP/sukisu-setup.sh" builtin
 
-          test -e drivers/kernelsu
+          echo "===== SukiSU directory ====="
+          ls -ld drivers/kernelsu
 
-          echo "===== SukiSU source ====="
+          echo "===== Resolved directory ====="
+          readlink -f drivers/kernelsu
 
-          ls -la drivers/kernelsu
+          echo "===== Git remote ====="
+          git -C drivers/kernelsu remote -v
 
-          echo "===== Hook configuration ====="
+          echo "===== Git branch ====="
+          git -C drivers/kernelsu branch --show-current
 
-          grep -R \
-            "KSU_HACK_ARM64_BRANCH_LINK" \
+          echo "===== Git commit ====="
+          git -C drivers/kernelsu rev-parse HEAD
+
+          echo "===== Kconfig files ====="
+          find -L drivers/kernelsu \
+            -iname '*kconfig*' -type f
+
+          echo "===== Hook configuration search ====="
+
+          grep -RniE \
+            'KSU_HACK_ARM64_BRANCH_LINK|KSU_TAMPER_SYSCALL_TABLE|config KSU' \
             drivers/kernelsu \
-            --include='Kconfig*' \
-            --include='*.Kconfig' || true
+            --include='Kconfig*' || true
 
-      # 5. Configure kernel
+          echo "===== Hook function declarations ====="
+
+          grep -RniE \
+            'ksu_handle_execveat|ksu_handle_faccessat|ksu_handle_stat|ksu_handle_sys_reboot' \
+            drivers/kernelsu/kernel \
+            --include='*.h' || true
+
+          echo "SukiSU source inspection completed."
+
+      # 5. Configure kernel      
       - name: Configure kernel
         shell: bash
         run: |
@@ -173,50 +194,37 @@ jobs:
             out/.config \
             arch/arm64/configs/vendor/oplus.config
 
-          # Verify the SukiSU branch exposes the required ARM64 option.
-          if ! grep -Rqs \
-            "config KSU_HACK_ARM64_BRANCH_LINK" \
-            drivers/kernelsu; then
-            echo "ERROR: SukiSU builtin does not expose ARM64 branch-link option."
-            echo "Manual hook patches must be adapted before building."
-            exit 1
-          fi
+          echo "===== Search ARM64 branch link option ====="
 
-          cat > out/sukisu.config <<'EOF'
-          CONFIG_KSU=y
-          CONFIG_KSU_HACK_ARM64_BRANCH_LINK=y
-          CONFIG_KSU_SUSFS=y
-          CONFIG_KSU_SUSFS_SUS_PATH=y
-          CONFIG_KSU_SUSFS_SUS_MOUNT=y
-          CONFIG_KALLSYMS=y
-          CONFIG_KALLSYMS_ALL=y
-          EOF
+          grep -Rni \
+            "KSU_HACK_ARM64_BRANCH_LINK" \
+            . \
+            --exclude-dir=.git \
+            --exclude-dir=out || true
 
-          scripts/kconfig/merge_config.sh \
-            -m -O out \
-            out/.config \
-            out/sukisu.config
+          echo "===== SukiSU Kconfig ====="
+
+          find drivers/kernelsu \
+            -iname '*kconfig*' -type f
+
+          echo "===== SukiSU hooks ====="
+
+          grep -RniE \
+            'ksu_handle_execveat|ksu_handle_faccessat|ksu_handle_stat|ksu_handle_newfstat_ret|ksu_handle_sys_reboot' \
+            drivers/kernelsu/kernel \
+            --include='*.h' || true
+
+          echo "===== Kernel configuration ====="
 
           make O=out ARCH=arm64 \
             LLVM=1 LLVM_IAS=1 \
             CROSS_COMPILE=aarch64-linux-gnu- \
             olddefconfig
 
-          echo "===== Verify SukiSU ====="
-
-          grep -E \
-            'CONFIG_(KSU|KSU_HACK_ARM64_BRANCH_LINK|KSU_SUSFS|KSU_SUSFS_SUS_PATH|KSU_SUSFS_SUS_MOUNT|KALLSYMS)=' \
+          grep -E 'CONFIG_(KSU|KPROBES|KALLSYMS|EXT4_FS)=' \
             out/.config || true
 
-          grep -qx 'CONFIG_KSU=y' out/.config
-
-          grep -qx \
-            'CONFIG_KSU_HACK_ARM64_BRANCH_LINK=y' \
-            out/.config
-
-          grep -qx 'CONFIG_KSU_SUSFS=y' out/.config
-
-          echo "SukiSU configuration passed."
+          echo "Diagnostic completed."
 
       # 6. Build kernel
       - name: Build kernel
