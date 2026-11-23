@@ -212,6 +212,34 @@ jobs:
             fs/stat.c || true
 
           echo "SukiSU source inspection completed."
+          echo "========== A. SukiSU sucompat.h =========="
+          sed -n '1,100p' drivers/kernelsu/feature/sucompat.h
+
+          echo "========== B. SukiSU sucompat.c =========="
+          sed -n '90,230p' drivers/kernelsu/feature/sucompat.c
+
+          echo "========== C. SukiSU sys_reboot handler =========="
+          sed -n '110,165p' drivers/kernelsu/supercall/supercall.c
+          sed -n '390,445p' drivers/kernelsu/supercall/dispatch.c
+
+          echo "========== D. Kernel exec.c =========="
+          sed -n '1870,1975p' fs/exec.c
+
+          echo "========== E. Kernel open.c =========="
+          sed -n '330,475p' fs/open.c
+
+          echo "========== F. Kernel stat.c =========="
+          sed -n '250,390p' fs/stat.c
+
+          echo "========== G. Kernel reboot.c =========="
+          sed -n '285,340p' kernel/reboot.c
+
+          echo "========== H. Search newfstat return hooks =========="
+          grep -RniE \
+            'newfstat_ret|fstat.*ret|handle_stat' \
+            drivers/kernelsu \
+            --include='*.h' \
+            --include='*.c' || true
 
       # 5. Configure kernel      
       - name: Configure kernel
