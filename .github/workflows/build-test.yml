@@ -306,20 +306,46 @@ jobs:
 
           grep -RniE \
             'ksu_handle_execveat|ksu_handle_faccessat|ksu_handle_stat|ksu_handle_newfstat_ret|ksu_handle_sys_reboot' \
-            drivers/kernelsu/kernel \
+            drivers/kernelsu \
             --include='*.h' || true
 
-          echo "===== Kernel configuration ====="
+          echo "===== Enable SukiSU Nova and SUSFS ====="
+
+          scripts/config --file out/.config \
+            --enable KSU \
+            --enable KSU_SUSFS
+
+          echo "===== Resolve kernel configuration ====="
 
           make O=out ARCH=arm64 \
             LLVM=1 LLVM_IAS=1 \
             CROSS_COMPILE=aarch64-linux-gnu- \
             olddefconfig
 
-          grep -E 'CONFIG_(KSU|KPROBES|KALLSYMS|EXT4_FS)=' \
-            out/.config || true
+          echo "===== Verify required configuration ====="
 
-          echo "Diagnostic completed."
+          grep -E '^(CONFIG_KSU|CONFIG_KSU_SUSFS)=' out/.config
+
+          grep -qx 'CONFIG_KSU=y' out/.config || {
+            echo "::error::CONFIG_KSU is not enabled after olddefconfig"
+            exit 1
+          }
+
+          grep -qx 'CONFIG_KSU_SUSFS=y' out/.config || {
+            echo "::error::CONFIG_KSU_SUSFS is not enabled after olddefconfig"
+            exit 1
+          }
+
+          echo "===== Verify SukiSU source link ====="
+          test -L drivers/kernelsu
+          test -e drivers/kernelsu
+          test -f drivers/kernelsu/Kconfig || find -L drivers/kernelsu -maxdepth 3 -iname 'Kconfig*' -type f -print
+
+          echo "===== Compiler selected for build ====="
+          command -v clang
+          clang --version | head -n 1
+
+          echo "SukiSU Nova + SUSFS configuration validation passed."
 
       # 6. Build kernel
       - name: Build kernel
