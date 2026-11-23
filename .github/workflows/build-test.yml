@@ -254,6 +254,21 @@ jobs:
           echo "========== L. Check execve hook declarations =========="
           grep -Rni 'ksu_handle_post_execveat' drivers/kernelsu --include='*.h' --include='*.c' || true
 
+          echo "========== M. user_path_at implementation =========="
+          grep -Rni -A25 -B8 'int user_path_at\|user_path_at_empty' fs namei.c include/linux --include='*.c' --include='*.h' 2>/dev/null || true
+
+          echo "========== N. SukiSU sucompat.c compatibility section =========="
+          sed -n '220,330p' drivers/kernelsu/feature/sucompat.c
+
+          echo "========== O. SukiSU reboot declarations and callers =========="
+          grep -Rni -A12 -B8 'ksu_handle_sys_reboot' drivers/kernelsu --include='*.c' --include='*.h'
+
+          echo "========== P. Kernel reboot syscall full body =========="
+          sed -n '308,410p' kernel/reboot.c
+
+          echo "========== Q. Kernel syscall headers =========="
+          grep -n -E 'linux/.*ksu|ksu' fs/exec.c fs/open.c fs/stat.c kernel/reboot.c
+
       # 5. Configure kernel      
       - name: Configure kernel
         shell: bash
