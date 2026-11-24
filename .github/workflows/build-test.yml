@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -513,11 +513,113 @@ jobs:
 
           sha256sum Image > SHA256SUMS.txt
 
-      # 9. Upload artifacts
-      - name: Upload kernel artifacts
+      # 9. Package a device-guarded AnyKernel3 installer.
+      # This intentionally replaces only the kernel Image in the existing boot image;
+      # it preserves the device's current ramdisk and embedded DTB, and does not flash dtbo.
+      - name: Package AnyKernel3
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          if [[ "$GITHUB_REF" != "refs/heads/test/sukisu-config-validation" ]]; then
+            echo "::error::Release packaging is restricted to test/sukisu-config-validation."
+            exit 1
+          fi
+
+          test -s artifacts/Image
+          grep -qx 'CONFIG_KSU=y' artifacts/kernel.config
+          grep -qx 'CONFIG_KALLSYMS=y' artifacts/kernel.config
+          grep -qx 'CONFIG_KALLSYMS_ALL=y' artifacts/kernel.config
+
+          AK3_REF="41f04bdb4ee30a44e429c2c1131d5e8bb32b15f1"
+          git clone --filter=blob:none https://github.com/osm0sis/AnyKernel3.git anykernel3
+          git -C anykernel3 checkout --detach "$AK3_REF"
+
+          cp artifacts/Image anykernel3/Image
+          cat > anykernel3/anykernel.sh <<'AK3'
+          ### AnyKernel3 Ramdisk Mod Script
+          ## OnePlus 9R (lemonades) - SukiSU Nova
+          properties() { '
+          kernel.string=Lemonades SukiSU Nova 4.19
+          do.devicecheck=1
+          do.modules=0
+          do.systemless=0
+          do.cleanup=1
+          do.cleanuponabort=0
+          device.name1=lemonades
+          device.name2=LE2100
+          device.name3=LE2101
+          device.name4=
+          device.name5=
+          supported.versions=
+          supported.patchlevels=
+          supported.vendorpatchlevels=
+          '; }
+
+          BLOCK=boot
+          IS_SLOT_DEVICE=1
+          RAMDISK_COMPRESSION=auto
+          PATCH_VBMETA_FLAG=auto
+
+          . tools/ak3-core.sh
+
+          # Preserve the existing ramdisk and embedded DTB; replace only Image.
+          dump_boot
+          write_boot
+          AK3
+
+          printf '%s\n' "Lemonades SukiSU Nova kernel package" > anykernel3/version
+          printf '%s\n' \
+            "Device: OnePlus 9R (lemonades / LE2100 / LE2101)" \
+            "Kernel: $(cat artifacts/kernel-version.txt)" \
+            "Kernel source commit: $(cat artifacts/kernel-commit.txt)" \
+            "SukiSU Nova: builtin" \
+            "SUSFS: disabled" \
+            "Installer: AnyKernel3; active boot slot only" \
+            "This package replaces Image and preserves the installed boot ramdisk and embedded DTB." \
+            "DTBO is not modified." > anykernel3/BUILD-INFO.txt
+
+          cd anykernel3
+          zip -r9 "$GITHUB_WORKSPACE/artifacts/AnyKernel3-lemonades-SukiSU-Nova.zip" . \
+            -x '.git/*' 'README.md' '*placeholder'
+          cd "$GITHUB_WORKSPACE"
+
+          unzip -t artifacts/AnyKernel3-lemonades-SukiSU-Nova.zip
+          unzip -Z1 artifacts/AnyKernel3-lemonades-SukiSU-Nova.zip | grep -qx 'Image'
+          unzip -Z1 artifacts/AnyKernel3-lemonades-SukiSU-Nova.zip | grep -qx 'anykernel.sh'
+          unzip -Z1 artifacts/AnyKernel3-lemonades-SukiSU-Nova.zip | grep -qx 'tools/ak3-core.sh'
+          sha256sum artifacts/AnyKernel3-lemonades-SukiSU-Nova.zip \
+            > artifacts/AnyKernel3-lemonades-SukiSU-Nova.zip.sha256
+
+      # 10. Keep a downloadable Actions artifact as well as the GitHub Release asset.
+      - name: Upload kernel and AnyKernel3 artifacts
         uses: actions/upload-artifact@v4
         with:
           name: Lemonades-SukiSU-Nova-4.19
           path: artifacts/
           if-no-files-found: error
           retention-days: 14
+
+      # 11. Publish the validated AnyKernel3 ZIP to GitHub Releases.
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: lemonades-build-${{ github.run_number }}
+          target_commitish: ${{ github.sha }}
+          name: OnePlus 9R SukiSU Nova - build ${{ github.run_number }}
+          body: |
+            Automated experimental kernel build for OnePlus 9R (lemonades).
+
+            - Kernel: `$(cat artifacts/kernel-version.txt)`
+            - SukiSU Nova: builtin
+            - SUSFS: disabled
+            - AnyKernel3 installer updates the active boot slot only.
+            - The installer preserves the existing boot ramdisk and embedded DTB; it does not flash DTBO.
+
+            **Experimental build. First boot is not yet verified on hardware. Keep a stock boot image available for recovery.**
+          files: |
+            artifacts/AnyKernel3-lemonades-SukiSU-Nova.zip
+            artifacts/AnyKernel3-lemonades-SukiSU-Nova.zip.sha256
+          prerelease: true
+          make_latest: false
+          fail_on_unmatched_files: true
