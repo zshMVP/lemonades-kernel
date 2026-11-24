@@ -1,10 +1,10 @@
-name: Build OnePlus 9R SukiSU Nova
+name: Build OnePlus 9R SakuraJimaMai
 
 on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -125,7 +125,7 @@ jobs:
 
           echo "AOSP Clang r574158 installation successful!"
 
-      # 4. Integrate SukiSU Nova builtin
+      # 5. Integrate SukiSU Nova builtin
       - name: Integrate SukiSU Nova
         shell: bash
         run: |
@@ -212,6 +212,121 @@ jobs:
             fs/stat.c || true
 
           echo "SukiSU source inspection completed."
+
+          echo "===== Linux 4.19 SukiSU builtin compatibility ====="
+          KSU_DIR="$(readlink -f drivers/kernelsu)"
+          KSU_INCLUDES="$KSU_DIR/kernel_includes.h"
+
+          test -s "$KSU_INCLUDES"
+
+          if grep -q '^#include <linux/static_call.h>' "$KSU_INCLUDES" \
+             && [ ! -f include/linux/static_call.h ]; then
+            if ! awk '
+              /^#include <linux\/static_call.h>/ {
+                if (prev ~ /KERNEL_VERSION\(5, 10, 0\)/) guarded=1
+              }
+              { prev=$0 }
+              END { exit !guarded }
+            ' "$KSU_INCLUDES"; then
+              echo "Adding Linux 5.10+ guard for static_call.h (not present in Linux 4.19)"
+              sed -i 's|^#include <linux/static_call.h>|#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)\n#include <linux/static_call.h>\n#endif|' "$KSU_INCLUDES"
+            fi
+          fi
+
+          if [ ! -f include/linux/static_call.h ]; then
+            if grep -q '^#include <linux/static_call.h>' "$KSU_INCLUDES"; then
+              awk '
+                /^#include <linux\/static_call.h>/ && prev !~ /KERNEL_VERSION\(5, 10, 0\)/ { bad=1 }
+                { prev=$0 }
+                END { exit bad ? 1 : 0 }
+              ' "$KSU_INCLUDES" || {
+                echo "::error::Unprotected static_call.h include remains for Linux 4.19"
+                exit 1
+              }
+            fi
+          fi
+
+          echo "Linux 4.19 static_call header compatibility check passed."
+
+          echo "===== Disable optional SUSFS header dependency ====="
+          if grep -q '^#include <linux/susfs.h>' "$KSU_INCLUDES"; then
+            sed -i 's|^#include <linux/susfs.h>|#ifdef CONFIG_KSU_SUSFS\n#include <linux/susfs.h>\n#endif|' "$KSU_INCLUDES"
+          fi
+
+          if [ ! -f include/linux/susfs.h ] && grep -q '^#include <linux/susfs.h>' "$KSU_INCLUDES"; then
+            awk '
+              /^#include <linux\/susfs.h>/ && prev !~ /^#ifdef CONFIG_KSU_SUSFS$/ { bad=1 }
+              { prev=$0 }
+              END { exit bad ? 1 : 0 }
+            ' "$KSU_INCLUDES" || {
+              echo "::error::Unprotected SUSFS header include remains while SUSFS is disabled"
+              exit 1
+            }
+          fi
+          echo "SUSFS header is conditional; SUSFS remains disabled."
+
+          echo "===== Apply verified Linux 4.19 SukiSU compatibility fixes ====="
+          python3 - <<'PY'
+          from pathlib import Path
+
+          root = Path("drivers/kernelsu").resolve()
+
+          preinit = root / "preinit/common/preinit.h"
+          text = preinit.read_text()
+          before = """#if !defined(CONFIG_ARM64) || !defined(KSU_CAN_USE_JUMP_LABEL)
+          #define KSU_NO_PREINIT
+          #endif"""
+          after = """#if !defined(CONFIG_ARM64) || !defined(KSU_CAN_USE_JUMP_LABEL)
+          #ifndef KSU_NO_PREINIT
+          #define KSU_NO_PREINIT
+          #endif
+          #endif"""
+          if before in text:
+              text = text.replace(before, after, 1)
+          elif after not in text:
+              raise SystemExit("Cannot safely patch preinit.h: expected block not found")
+          preinit.write_text(text)
+
+          kpm = root / "extension/kpm/kpm.c"
+          text = kpm.read_text()
+          before = "if (!access_ok(u64_to_user_ptr(cmd.result_code), sizeof(result))) return -EFAULT;"
+          after = """#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 0, 0)
+              if (!access_ok(u64_to_user_ptr(cmd.result_code), sizeof(result))) return -EFAULT;
+          #else
+              if (!access_ok(VERIFY_WRITE, u64_to_user_ptr(cmd.result_code), sizeof(result))) return -EFAULT;
+          #endif"""
+          if before in text:
+              text = text.replace(before, after, 1)
+          elif after not in text:
+              raise SystemExit("Cannot safely patch kpm.c: expected access_ok call not found")
+          kpm.write_text(text)
+
+          rules = root / "selinux/rules.c"
+          text = rules.read_text()
+          before = """void apply_kernelsu_rules(void)
+          {
+              struct selinux_policy *pol, *old_pol;
+              struct policydb *db;"""
+          after = """void apply_kernelsu_rules(void)
+          {
+          #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)
+              struct selinux_policy *pol, *old_pol;
+          #endif
+              struct policydb *db;"""
+          if before in text:
+              text = text.replace(before, after, 1)
+          elif after not in text:
+              raise SystemExit("Cannot safely patch rules.c: expected declarations not found")
+          rules.write_text(text)
+
+          print("Applied preinit macro, access_ok API, and SELinux unused-variable compatibility fixes.")
+          PY
+
+          echo "===== Verify Linux 4.19 compatibility patch markers ====="
+          grep -n -A4 -B2 'KSU_NO_PREINIT' "$KSU_DIR/preinit/common/preinit.h"
+          grep -n -A5 -B2 'access_ok' "$KSU_DIR/extension/kpm/kpm.c"
+          grep -n -A6 'void apply_kernelsu_rules' "$KSU_DIR/selinux/rules.c"
+
           echo "========== A. SukiSU sucompat.h =========="
           sed -n '1,100p' drivers/kernelsu/feature/sucompat.h
 
@@ -267,14 +382,15 @@ jobs:
           sed -n '308,410p' kernel/reboot.c
 
           echo "========== Q. Kernel syscall headers =========="
-          grep -n -E 'linux/.*ksu|ksu' fs/exec.c fs/open.c fs/stat.c kernel/reboot.c
+          grep -n -E 'linux/.*ksu|ksu' fs/exec.c fs/open.c fs/stat.c kernel/reboot.c || true
 
-      # 5. Configure kernel      
+      # 6. Configure kernel      
       - name: Configure kernel
         shell: bash
         run: |
           set -euxo pipefail
 
+          export PATH="$GITHUB_WORKSPACE/clang/bin:$PATH"
           cd kernel
 
           mkdir -p out
@@ -306,24 +422,57 @@ jobs:
 
           grep -RniE \
             'ksu_handle_execveat|ksu_handle_faccessat|ksu_handle_stat|ksu_handle_newfstat_ret|ksu_handle_sys_reboot' \
-            drivers/kernelsu/kernel \
+            drivers/kernelsu \
             --include='*.h' || true
 
-          echo "===== Kernel configuration ====="
+          echo "===== Enable SukiSU Nova (SUSFS temporarily disabled) ====="
+
+          scripts/config --file out/.config \
+            --enable KSU \
+            --disable KSU_SUSFS
+
+          echo "===== Resolve kernel configuration ====="
 
           make O=out ARCH=arm64 \
             LLVM=1 LLVM_IAS=1 \
             CROSS_COMPILE=aarch64-linux-gnu- \
             olddefconfig
 
-          grep -E 'CONFIG_(KSU|KPROBES|KALLSYMS|EXT4_FS)=' \
-            out/.config || true
+          echo "===== Verify required configuration ====="
 
-          echo "Diagnostic completed."
+          grep -E '^CONFIG_KSU=' out/.config
 
-      # 6. Build kernel
+          grep -qx 'CONFIG_KSU=y' out/.config || {
+            echo "::error::CONFIG_KSU is not enabled after olddefconfig"
+            exit 1
+          }
+
+          if grep -q '^CONFIG_KSU_SUSFS=y' out/.config; then
+            echo "::error::SUSFS unexpectedly enabled in this non-SUSFS build"
+            exit 1
+          fi
+
+          echo "===== Verify SukiSU source link ====="
+          test -L drivers/kernelsu
+          test -e drivers/kernelsu
+          test -f drivers/kernelsu/Kconfig || find -L drivers/kernelsu -maxdepth 3 -iname 'Kconfig*' -type f -print
+
+          echo "===== Compiler selected for build ====="
+          command -v clang
+          clang --version | head -n 1
+          clang --version | grep -F "21.0.0" || {
+            echo "::error::AOSP Clang 21 is not first in PATH"
+            exit 1
+          }
+
+          echo "SukiSU Nova configuration validation passed (SUSFS intentionally disabled)."
+
+      # 7. Build kernel
       - name: Build kernel
         run: |
+          set -euxo pipefail
+          export PATH="$GITHUB_WORKSPACE/clang/bin:$PATH"
+          clang --version | grep -F "21.0.0"
           cd kernel
 
           make -j"$(nproc)" \
@@ -334,7 +483,7 @@ jobs:
             CROSS_COMPILE=aarch64-linux-gnu- \
             Image dtbs
 
-      # 7. Collect artifacts
+      # 8. Collect artifacts
       - name: Collect artifacts
         run: |
           cd kernel
@@ -364,11 +513,118 @@ jobs:
 
           sha256sum Image > SHA256SUMS.txt
 
-      # 8. Upload artifacts
-      - name: Upload kernel artifacts
+      # 9. Package a device-guarded AnyKernel3 installer.
+      # This intentionally replaces only the kernel Image in the existing boot image;
+      # it preserves the device's current ramdisk and embedded DTB, and does not flash dtbo.
+      - name: Package AnyKernel3
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          if [[ "$GITHUB_REF" != "refs/heads/main" ]]; then
+            echo "::error::Release packaging is restricted to main."
+            exit 1
+          fi
+
+          test -s artifacts/Image
+          grep -qx 'CONFIG_KSU=y' artifacts/kernel.config
+          grep -qx 'CONFIG_KALLSYMS=y' artifacts/kernel.config
+          grep -qx 'CONFIG_KALLSYMS_ALL=y' artifacts/kernel.config
+
+          AK3_REF="41f04bdb4ee30a44e429c2c1131d5e8bb32b15f1"
+          git clone --filter=blob:none https://github.com/osm0sis/AnyKernel3.git anykernel3
+          git -C anykernel3 checkout --detach "$AK3_REF"
+
+          cp artifacts/Image anykernel3/Image
+          cat > anykernel3/anykernel.sh <<'AK3'
+          ### AnyKernel3 Ramdisk Mod Script
+          ## OnePlus 9R (lemonades) - SukiSU Nova
+          properties() { '
+          kernel.string=SakuraJimaMai
+          do.devicecheck=1
+          do.modules=0
+          do.systemless=0
+          do.cleanup=1
+          do.cleanuponabort=0
+          device.name1=lemonades
+          device.name2=LE2100
+          device.name3=LE2101
+          device.name4=OnePlus9R
+          device.name5=OnePlus9R_IN
+          supported.versions=
+          supported.patchlevels=
+          supported.vendorpatchlevels=
+          '; }
+
+          BLOCK=boot
+          IS_SLOT_DEVICE=1
+          RAMDISK_COMPRESSION=auto
+          PATCH_VBMETA_FLAG=auto
+
+          . tools/ak3-core.sh
+
+          # Preserve the existing ramdisk and embedded DTB; replace only Image.
+          dump_boot
+          write_boot
+          AK3
+
+          printf '%s\n' "SakuraJimaMai kernel package" > anykernel3/version
+          printf '%s\n' \
+            "Device: OnePlus 9R (lemonades / LE2100 / LE2101)" \
+            "Kernel: $(cat artifacts/kernel-version.txt)" \
+            "Kernel source commit: $(cat artifacts/kernel-commit.txt)" \
+            "SukiSU Nova: builtin" \
+            "SUSFS: disabled" \
+            "Installer: AnyKernel3; active boot slot only" \
+            "This package replaces Image and preserves the installed boot ramdisk and embedded DTB." \
+            "DTBO is not modified." > anykernel3/BUILD-INFO.txt
+
+          cat > artifacts/RELEASE-NOTES.md <<EOF
+          ## OnePlus 9R (lemonades) - experimental SukiSU Nova kernel
+
+          - Kernel: $(cat artifacts/kernel-version.txt)
+          - Kernel source commit: $(cat artifacts/kernel-commit.txt)
+          - SukiSU Nova: builtin
+          - SUSFS: disabled
+          - AnyKernel3 installer targets the active boot slot only.
+          - The installer replaces the kernel Image while preserving the installed boot ramdisk and embedded DTB.
+          - DTBO is not modified.
+
+          **Experimental build. First boot is not yet verified on hardware. Keep a stock boot image available for recovery.**
+          EOF
+
+          cd anykernel3
+          zip -r9 "$GITHUB_WORKSPACE/artifacts/AnyKernel3-lemonades-SakuraJimaMai.zip" . \
+            -x '.git/*' 'README.md' '*placeholder'
+          cd "$GITHUB_WORKSPACE"
+
+          unzip -t artifacts/AnyKernel3-lemonades-SakuraJimaMai.zip
+          unzip -Z1 artifacts/AnyKernel3-lemonades-SakuraJimaMai.zip | grep -qx 'Image'
+          unzip -Z1 artifacts/AnyKernel3-lemonades-SakuraJimaMai.zip | grep -qx 'anykernel.sh'
+          unzip -Z1 artifacts/AnyKernel3-lemonades-SakuraJimaMai.zip | grep -qx 'tools/ak3-core.sh'
+          sha256sum artifacts/AnyKernel3-lemonades-SakuraJimaMai.zip \
+            > artifacts/AnyKernel3-lemonades-SakuraJimaMai.zip.sha256
+
+      # 10. Keep a downloadable Actions artifact as well as the GitHub Release asset.
+      - name: Upload kernel and AnyKernel3 artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: Lemonades-SukiSU-Nova-4.19
+          name: SakuraJimaMai-4.19
           path: artifacts/
           if-no-files-found: error
           retention-days: 14
+
+      # 11. Publish the validated AnyKernel3 ZIP to GitHub Releases.
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: lemonades-build-${{ github.run_number }}
+          target_commitish: ${{ github.sha }}
+          name: OnePlus 9R SakuraJimaMai - build ${{ github.run_number }}
+          body_path: artifacts/RELEASE-NOTES.md
+          files: |
+            artifacts/AnyKernel3-lemonades-SakuraJimaMai.zip
+            artifacts/AnyKernel3-lemonades-SakuraJimaMai.zip.sha256
+          prerelease: true
+          make_latest: false
+          fail_on_unmatched_files: true
