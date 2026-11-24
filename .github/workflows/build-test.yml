@@ -381,11 +381,13 @@ jobs:
           {
           #ifdef CONFIG_KSU
           \textern int ksu_handle_stat(int *, const char __user **, int *);
-          \tksu_handle_stat(&dfd, &filename, &flag);
           #endif
           \tstruct kstat stat;
           \tint error;
 
+          #ifdef CONFIG_KSU
+          \tksu_handle_stat(&dfd, &filename, &flag);
+          #endif
           \terror = vfs_fstatat(dfd, filename, &stat, flag);""",
               "newfstatat")
           patch_once("fs/stat.c",
