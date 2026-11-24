@@ -75,7 +75,7 @@ jobs:
 
           SUSFS_REPO="https://gitlab.com/simonpunk/susfs4ksu.git"
           SUSFS_BRANCH="kernel-4.19"
-          SUSFS_COMMIT="001e69919c6271f690fd00b17e4c721c9e599152"
+          SUSFS_COMMIT="b349e5d8d0583b6c43f1b7393f136c0e3855843a"
 
           git clone --depth=1 --branch "$SUSFS_BRANCH" "$SUSFS_REPO" susfs4ksu
           cd susfs4ksu
@@ -258,6 +258,41 @@ jobs:
             fs/stat.c || true
 
           echo "SukiSU source inspection completed."
+
+          echo "===== Linux 4.19 SukiSU builtin compatibility ====="
+          KSU_DIR="$(readlink -f drivers/kernelsu)"
+          KSU_INCLUDES="$KSU_DIR/kernel_includes.h"
+
+          test -s "$KSU_INCLUDES"
+
+          if grep -q '^#include <linux/static_call.h>' "$KSU_INCLUDES" \
+             && [ ! -f include/linux/static_call.h ]; then
+            if ! awk '
+              /^#include <linux\/static_call.h>/ {
+                if (prev ~ /KERNEL_VERSION\(5, 10, 0\)/) guarded=1
+              }
+              { prev=$0 }
+              END { exit !guarded }
+            ' "$KSU_INCLUDES"; then
+              echo "Adding Linux 5.10+ guard for static_call.h (not present in Linux 4.19)"
+              sed -i 's|^#include <linux/static_call.h>|#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)\\n#include <linux/static_call.h>\\n#endif|' "$KSU_INCLUDES"
+            fi
+          fi
+
+          if [ ! -f include/linux/static_call.h ]; then
+            if grep -q '^#include <linux/static_call.h>' "$KSU_INCLUDES"; then
+              awk '
+                /^#include <linux\/static_call.h>/ && prev !~ /KERNEL_VERSION\(5, 10, 0\)/ { bad=1 }
+                { prev=$0 }
+                END { exit bad ? 1 : 0 }
+              ' "$KSU_INCLUDES" || {
+                echo "::error::Unprotected static_call.h include remains for Linux 4.19"
+                exit 1
+              }
+            fi
+          fi
+
+          echo "Linux 4.19 static_call header compatibility check passed."
           echo "========== A. SukiSU sucompat.h =========="
           sed -n '1,100p' drivers/kernelsu/feature/sucompat.h
 
