@@ -67,7 +67,53 @@ jobs:
 
           echo "Kernel source verification passed."
 
-      # 3. Install AOSP Clang 21
+      # 3. Apply the official SUSFS patch set for Linux 4.19
+      - name: Integrate SUSFS 4.19
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          SUSFS_REPO="https://gitlab.com/simonpunk/susfs4ksu.git"
+          SUSFS_BRANCH="kernel-4.19"
+          SUSFS_COMMIT="001e69919c6271f690fd00b17e4c721c9e599152"
+
+          git clone --depth=1 --branch "$SUSFS_BRANCH" "$SUSFS_REPO" susfs4ksu
+          cd susfs4ksu
+
+          echo "===== Pin SUSFS source revision ====="
+          ACTUAL_COMMIT="$(git rev-parse HEAD)"
+          echo "Expected: $SUSFS_COMMIT"
+          echo "Actual:   $ACTUAL_COMMIT"
+          test "$ACTUAL_COMMIT" = "$SUSFS_COMMIT"
+
+          cd "$GITHUB_WORKSPACE/kernel"
+
+          test -s "$GITHUB_WORKSPACE/susfs4ksu/kernel_patches/50_add_susfs_in_kernel-4.19.patch"
+          test -d "$GITHUB_WORKSPACE/susfs4ksu/kernel_patches/fs"
+          test -d "$GITHUB_WORKSPACE/susfs4ksu/kernel_patches/include/linux"
+
+          echo "===== Install SUSFS kernel source files ====="
+          cp -av "$GITHUB_WORKSPACE"/susfs4ksu/kernel_patches/fs/. fs/
+          cp -av "$GITHUB_WORKSPACE"/susfs4ksu/kernel_patches/include/linux/. include/linux/
+
+          echo "===== Check SUSFS 4.19 patch applicability ====="
+          patch --batch --forward --dry-run -p1 \
+            < "$GITHUB_WORKSPACE/susfs4ksu/kernel_patches/50_add_susfs_in_kernel-4.19.patch"
+
+          echo "===== Apply SUSFS 4.19 patch ====="
+          patch --batch --forward -p1 \
+            < "$GITHUB_WORKSPACE/susfs4ksu/kernel_patches/50_add_susfs_in_kernel-4.19.patch"
+
+          test -s fs/susfs.c
+          test -s include/linux/susfs.h
+          test -s include/linux/susfs_def.h
+
+          echo "===== Verify SUSFS kernel integration ====="
+          grep -Rni "susfs" fs/Makefile fs/Kconfig include/linux/susfs.h | head -80
+
+          echo "SUSFS Linux 4.19 patch application passed."
+
+      # 4. Install AOSP Clang 21
       - name: Download AOSP Clang
         shell: bash
         run: |
@@ -125,7 +171,7 @@ jobs:
 
           echo "AOSP Clang r574158 installation successful!"
 
-      # 4. Integrate SukiSU Nova builtin
+      # 5. Integrate SukiSU Nova builtin
       - name: Integrate SukiSU Nova
         shell: bash
         run: |
@@ -269,7 +315,7 @@ jobs:
           echo "========== Q. Kernel syscall headers =========="
           grep -n -E 'linux/.*ksu|ksu' fs/exec.c fs/open.c fs/stat.c kernel/reboot.c || true
 
-      # 5. Configure kernel      
+      # 6. Configure kernel      
       - name: Configure kernel
         shell: bash
         run: |
@@ -347,7 +393,7 @@ jobs:
 
           echo "SukiSU Nova + SUSFS configuration validation passed."
 
-      # 6. Build kernel
+      # 7. Build kernel
       - name: Build kernel
         run: |
           cd kernel
@@ -360,7 +406,7 @@ jobs:
             CROSS_COMPILE=aarch64-linux-gnu- \
             Image dtbs
 
-      # 7. Collect artifacts
+      # 8. Collect artifacts
       - name: Collect artifacts
         run: |
           cd kernel
@@ -390,7 +436,7 @@ jobs:
 
           sha256sum Image > SHA256SUMS.txt
 
-      # 8. Upload artifacts
+      # 9. Upload artifacts
       - name: Upload kernel artifacts
         uses: actions/upload-artifact@v4
         with:
