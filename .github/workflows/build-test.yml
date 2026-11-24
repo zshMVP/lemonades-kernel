@@ -328,6 +328,7 @@ jobs:
         run: |
           set -euxo pipefail
 
+          export PATH="$GITHUB_WORKSPACE/clang/bin:$PATH"
           cd kernel
 
           mkdir -p out
@@ -384,6 +385,11 @@ jobs:
             exit 1
           }
 
+          if grep -q '^CONFIG_KSU_SUSFS=y' out/.config; then
+            echo "::error::SUSFS unexpectedly enabled in this non-SUSFS build"
+            exit 1
+          fi
+
           echo "===== Verify SukiSU source link ====="
           test -L drivers/kernelsu
           test -e drivers/kernelsu
@@ -392,12 +398,19 @@ jobs:
           echo "===== Compiler selected for build ====="
           command -v clang
           clang --version | head -n 1
+          clang --version | grep -F "21.0.0" || {
+            echo "::error::AOSP Clang 21 is not first in PATH"
+            exit 1
+          }
 
           echo "SukiSU Nova configuration validation passed (SUSFS intentionally disabled)."
 
       # 7. Build kernel
       - name: Build kernel
         run: |
+          set -euxo pipefail
+          export PATH="$GITHUB_WORKSPACE/clang/bin:$PATH"
+          clang --version | grep -F "21.0.0"
           cd kernel
 
           make -j"$(nproc)" \
