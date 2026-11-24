@@ -549,8 +549,8 @@ jobs:
           device.name1=lemonades
           device.name2=LE2100
           device.name3=LE2101
-          device.name4=
-          device.name5=
+          device.name4=OnePlus9R
+          device.name5=OnePlus9R_IN
           supported.versions=
           supported.patchlevels=
           supported.vendorpatchlevels=
