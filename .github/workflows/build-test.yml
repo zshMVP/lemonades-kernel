@@ -510,6 +510,10 @@ jobs:
 
           mkdir -p out
 
+          # An empty .scmversion suppresses Git describe/-dirty suffixes in 4.19.
+          : > .scmversion
+          test -f .scmversion
+
           make O=out ARCH=arm64 \
             LLVM=1 LLVM_IAS=1 \
             CROSS_COMPILE=aarch64-linux-gnu- \
