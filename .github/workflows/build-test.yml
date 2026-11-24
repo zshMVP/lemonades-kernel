@@ -275,7 +275,7 @@ jobs:
               END { exit !guarded }
             ' "$KSU_INCLUDES"; then
               echo "Adding Linux 5.10+ guard for static_call.h (not present in Linux 4.19)"
-              sed -i 's|^#include <linux/static_call.h>|#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)\\n#include <linux/static_call.h>\\n#endif|' "$KSU_INCLUDES"
+              sed -i 's|^#include <linux/static_call.h>|#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)\n#include <linux/static_call.h>\n#endif|' "$KSU_INCLUDES"
             fi
           fi
 
