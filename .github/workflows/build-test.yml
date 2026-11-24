@@ -540,8 +540,9 @@ jobs:
             --enable KSU \
             --disable KSU_SUSFS
 
-          # Set the actual Linux kernel release suffix (uname -r), not just ZIP metadata.
-          scripts/config --file out/.config --set-str LOCALVERSION "-perf-SakuraJimaMai"
+          # Keep the kernel release string concise: drop perf and Git dirty/commit suffixes.
+          scripts/config --file out/.config --set-str LOCALVERSION "-SakuraJimaMai"
+          scripts/config --file out/.config --disable LOCALVERSION_AUTO
 
           echo "===== Resolve kernel configuration ====="
 
