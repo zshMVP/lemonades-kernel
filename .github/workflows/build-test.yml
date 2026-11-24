@@ -247,6 +247,24 @@ jobs:
           fi
 
           echo "Linux 4.19 static_call header compatibility check passed."
+
+          echo "===== Disable optional SUSFS header dependency ====="
+          if grep -q '^#include <linux/susfs.h>' "$KSU_INCLUDES"; then
+            sed -i 's|^#include <linux/susfs.h>|#ifdef CONFIG_KSU_SUSFS\n#include <linux/susfs.h>\n#endif|' "$KSU_INCLUDES"
+          fi
+
+          if [ ! -f include/linux/susfs.h ] && grep -q '^#include <linux/susfs.h>' "$KSU_INCLUDES"; then
+            awk '
+              /^#include <linux\/susfs.h>/ && prev !~ /^#ifdef CONFIG_KSU_SUSFS$/ { bad=1 }
+              { prev=$0 }
+              END { exit bad ? 1 : 0 }
+            ' "$KSU_INCLUDES" || {
+              echo "::error::Unprotected SUSFS header include remains while SUSFS is disabled"
+              exit 1
+            }
+          fi
+          echo "SUSFS header is conditional; SUSFS remains disabled."
+
           echo "========== A. SukiSU sucompat.h =========="
           sed -n '1,100p' drivers/kernelsu/feature/sucompat.h
 
@@ -346,8 +364,9 @@ jobs:
 
           echo "===== Enable SukiSU Nova (SUSFS temporarily disabled) ====="
 
-          scripts/config --file out/.config \
-            --enable KSU
+          scripts/config --file out/.config \\
+            --enable KSU \\
+            --disable KSU_SUSFS
 
           echo "===== Resolve kernel configuration ====="
 
