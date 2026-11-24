@@ -427,10 +427,10 @@ jobs:
           \tstruct pid_namespace *pid_ns = task_active_pid_ns(current);""",
               "sys-reboot")
           patch_once("kernel/reboot.c",
-              """\\tint ret = 0;""",
+              """\tint ret = 0;""",
               """\\tint ret = 0;
           #if defined(CONFIG_KSU) && !defined(CONFIG_KSU_KPROBES_KSUD)
-          \\tksu_handle_sys_reboot(magic1, magic2, cmd, &arg);
+          \tksu_handle_sys_reboot(magic1, magic2, cmd, &arg);
           #endif""",
               "sys-reboot-call-after-declarations")
           PY
