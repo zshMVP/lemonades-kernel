@@ -579,6 +579,20 @@ jobs:
             "This package replaces Image and preserves the installed boot ramdisk and embedded DTB." \
             "DTBO is not modified." > anykernel3/BUILD-INFO.txt
 
+          cat > artifacts/RELEASE-NOTES.md <<EOF
+          ## OnePlus 9R (lemonades) - experimental SukiSU Nova kernel
+
+          - Kernel: $(cat artifacts/kernel-version.txt)
+          - Kernel source commit: $(cat artifacts/kernel-commit.txt)
+          - SukiSU Nova: builtin
+          - SUSFS: disabled
+          - AnyKernel3 installer targets the active boot slot only.
+          - The installer replaces the kernel Image while preserving the installed boot ramdisk and embedded DTB.
+          - DTBO is not modified.
+
+          **Experimental build. First boot is not yet verified on hardware. Keep a stock boot image available for recovery.**
+          EOF
+
           cd anykernel3
           zip -r9 "$GITHUB_WORKSPACE/artifacts/AnyKernel3-lemonades-SukiSU-Nova.zip" . \
             -x '.git/*' 'README.md' '*placeholder'
@@ -607,16 +621,7 @@ jobs:
           tag_name: lemonades-build-${{ github.run_number }}
           target_commitish: ${{ github.sha }}
           name: OnePlus 9R SukiSU Nova - build ${{ github.run_number }}
-          body: |
-            Automated experimental kernel build for OnePlus 9R (lemonades).
-
-            - Kernel: `$(cat artifacts/kernel-version.txt)`
-            - SukiSU Nova: builtin
-            - SUSFS: disabled
-            - AnyKernel3 installer updates the active boot slot only.
-            - The installer preserves the existing boot ramdisk and embedded DTB; it does not flash DTBO.
-
-            **Experimental build. First boot is not yet verified on hardware. Keep a stock boot image available for recovery.**
+          body_path: artifacts/RELEASE-NOTES.md
           files: |
             artifacts/AnyKernel3-lemonades-SukiSU-Nova.zip
             artifacts/AnyKernel3-lemonades-SukiSU-Nova.zip.sha256
