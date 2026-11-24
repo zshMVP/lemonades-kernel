@@ -327,6 +327,113 @@ jobs:
           grep -n -A5 -B2 'access_ok' "$KSU_DIR/extension/kpm/kpm.c"
           grep -n -A6 'void apply_kernelsu_rules' "$KSU_DIR/selinux/rules.c"
 
+          echo "===== Apply SukiSU builtin manual hooks for Android 16 ====="
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def patch_once(path, old, new, label):
+              p = Path(path)
+              text = p.read_text()
+              if new in text:
+                  print(f"{label}: already applied")
+                  return
+              if old not in text:
+                  raise SystemExit(f"Cannot safely apply {label}: source context not found in {path}")
+              p.write_text(text.replace(old, new, 1))
+              print(f"{label}: applied")
+
+          patch_once("fs/exec.c",
+              """{
+          \treturn __do_execve_file(fd, filename, argv, envp, flags, NULL);
+          }""",
+              """{
+          #ifdef CONFIG_KSU
+          \textern int ksu_handle_execveat(int *, struct filename **, void *, void *, int *);
+          \tksu_handle_execveat(&fd, &filename, &argv, &envp, &flags);
+          #endif
+          \treturn __do_execve_file(fd, filename, argv, envp, flags, NULL);
+          }""",
+              "execve")
+          patch_once("fs/open.c",
+              """SYSCALL_DEFINE3(faccessat, int, dfd, const char __user *, filename, int, mode)
+          {
+          \treturn do_faccessat(dfd, filename, mode);
+          }""",
+              """SYSCALL_DEFINE3(faccessat, int, dfd, const char __user *, filename, int, mode)
+          {
+          #ifdef CONFIG_KSU
+          \textern int ksu_handle_faccessat(int *, const char __user **, int *, int *);
+          \tksu_handle_faccessat(&dfd, &filename, &mode, NULL);
+          #endif
+          \treturn do_faccessat(dfd, filename, mode);
+          }""",
+              "faccessat")
+          patch_once("fs/stat.c",
+              """SYSCALL_DEFINE4(newfstatat, int, dfd, const char __user *, filename,
+          \t\tstruct stat __user *, statbuf, int, flag)
+          {
+          \tstruct kstat stat;
+          \tint error;
+
+          \terror = vfs_fstatat(dfd, filename, &stat, flag);""",
+              """SYSCALL_DEFINE4(newfstatat, int, dfd, const char __user *, filename,
+          \t\tstruct stat __user *, statbuf, int, flag)
+          {
+          #ifdef CONFIG_KSU
+          \textern int ksu_handle_stat(int *, const char __user **, int *);
+          \tksu_handle_stat(&dfd, &filename, &flag);
+          #endif
+          \tstruct kstat stat;
+          \tint error;
+
+          \terror = vfs_fstatat(dfd, filename, &stat, flag);""",
+              "newfstatat")
+          patch_once("fs/stat.c",
+              """\tif (!error)
+          \t\terror = cp_new_stat(&stat, statbuf);
+
+          \treturn error;
+          }
+
+          static int do_readlinkat""",
+              """\tif (!error)
+          \t\terror = cp_new_stat(&stat, statbuf);
+
+          #if defined(CONFIG_KSU) && !defined(CONFIG_KSU_KPROBES_KSUD)
+          #pragma GCC diagnostic push
+          #pragma GCC diagnostic ignored "-Wdeclaration-after-statement"
+          \textern void ksu_handle_newfstat_ret(unsigned int *, struct stat __user **);
+          \tksu_handle_newfstat_ret(&fd, &statbuf);
+          #pragma GCC diagnostic pop
+          #endif
+          \treturn error;
+          }
+
+          static int do_readlinkat""",
+              "newfstat-return")
+          patch_once("kernel/reboot.c",
+              """SYSCALL_DEFINE4(reboot, int, magic1, int, magic2, unsigned int, cmd,
+          \t\tvoid __user *, arg)
+          {
+          \tstruct pid_namespace *pid_ns = task_active_pid_ns(current);""",
+              """SYSCALL_DEFINE4(reboot, int, magic1, int, magic2, unsigned int, cmd,
+          \t\tvoid __user *, arg)
+          {
+          #if defined(CONFIG_KSU) && !defined(CONFIG_KSU_KPROBES_KSUD)
+          \textern int ksu_handle_sys_reboot(int, int, unsigned int, void __user **);
+          \tksu_handle_sys_reboot(magic1, magic2, cmd, &arg);
+          #endif
+          \tstruct pid_namespace *pid_ns = task_active_pid_ns(current);""",
+              "sys-reboot")
+          PY
+
+          echo "===== Verify SukiSU manual hooks ====="
+          grep -n 'ksu_handle_execveat' fs/exec.c
+          grep -n 'ksu_handle_faccessat' fs/open.c
+          grep -n 'ksu_handle_stat' fs/stat.c
+          grep -n 'ksu_handle_newfstat_ret' fs/stat.c
+          grep -n 'ksu_handle_sys_reboot' kernel/reboot.c
+
           echo "========== A. SukiSU sucompat.h =========="
           sed -n '1,100p' drivers/kernelsu/feature/sucompat.h
 
@@ -431,12 +538,23 @@ jobs:
             --enable KSU \
             --disable KSU_SUSFS
 
+          # Set the actual Linux kernel release suffix (uname -r), not just ZIP metadata.
+          scripts/config --file out/.config --set-str LOCALVERSION "-perf-SakuraJimaMai"
+
           echo "===== Resolve kernel configuration ====="
 
           make O=out ARCH=arm64 \
             LLVM=1 LLVM_IAS=1 \
             CROSS_COMPILE=aarch64-linux-gnu- \
             olddefconfig
+
+          echo "===== Verify actual kernel release name ====="
+          KERNEL_RELEASE="$(make -s O=out ARCH=arm64 kernelrelease)"
+          echo "$KERNEL_RELEASE"
+          echo "$KERNEL_RELEASE" | grep -F "SakuraJimaMai" || {
+            echo "::error::SakuraJimaMai is missing from kernel release string"
+            exit 1
+          }
 
           echo "===== Verify required configuration ====="
 
