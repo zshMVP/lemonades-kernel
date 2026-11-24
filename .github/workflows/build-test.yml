@@ -67,53 +67,7 @@ jobs:
 
           echo "Kernel source verification passed."
 
-      # 3. Apply the official SUSFS patch set for Linux 4.19
-      - name: Integrate SUSFS 4.19
-        shell: bash
-        run: |
-          set -euxo pipefail
-
-          SUSFS_REPO="https://gitlab.com/simonpunk/susfs4ksu.git"
-          SUSFS_BRANCH="kernel-4.19"
-          SUSFS_COMMIT="001e69919c6271f690fd00b17e4c721c9e599152"
-
-          git clone --depth=1 --branch "$SUSFS_BRANCH" "$SUSFS_REPO" susfs4ksu
-          cd susfs4ksu
-
-          echo "===== Pin SUSFS source revision ====="
-          ACTUAL_COMMIT="$(git rev-parse HEAD)"
-          echo "Expected: $SUSFS_COMMIT"
-          echo "Actual:   $ACTUAL_COMMIT"
-          test "$ACTUAL_COMMIT" = "$SUSFS_COMMIT"
-
-          cd "$GITHUB_WORKSPACE/kernel"
-
-          test -s "$GITHUB_WORKSPACE/susfs4ksu/kernel_patches/50_add_susfs_in_kernel-4.19.patch"
-          test -d "$GITHUB_WORKSPACE/susfs4ksu/kernel_patches/fs"
-          test -d "$GITHUB_WORKSPACE/susfs4ksu/kernel_patches/include/linux"
-
-          echo "===== Install SUSFS kernel source files ====="
-          cp -av "$GITHUB_WORKSPACE"/susfs4ksu/kernel_patches/fs/. fs/
-          cp -av "$GITHUB_WORKSPACE"/susfs4ksu/kernel_patches/include/linux/. include/linux/
-
-          echo "===== Check SUSFS 4.19 patch applicability ====="
-          patch --batch --forward --dry-run -p1 \
-            < "$GITHUB_WORKSPACE/susfs4ksu/kernel_patches/50_add_susfs_in_kernel-4.19.patch"
-
-          echo "===== Apply SUSFS 4.19 patch ====="
-          patch --batch --forward -p1 \
-            < "$GITHUB_WORKSPACE/susfs4ksu/kernel_patches/50_add_susfs_in_kernel-4.19.patch"
-
-          test -s fs/susfs.c
-          test -s include/linux/susfs.h
-          test -s include/linux/susfs_def.h
-
-          echo "===== Verify SUSFS kernel integration ====="
-          grep -Rni "susfs" fs/Makefile fs/Kconfig include/linux/susfs.h | head -80
-
-          echo "SUSFS Linux 4.19 patch application passed."
-
-      # 4. Install AOSP Clang 21
+      # 3. Install AOSP Clang 21
       - name: Download AOSP Clang
         shell: bash
         run: |
@@ -390,11 +344,10 @@ jobs:
             drivers/kernelsu \
             --include='*.h' || true
 
-          echo "===== Enable SukiSU Nova and SUSFS ====="
+          echo "===== Enable SukiSU Nova (SUSFS temporarily disabled) ====="
 
           scripts/config --file out/.config \
-            --enable KSU \
-            --enable KSU_SUSFS
+            --enable KSU
 
           echo "===== Resolve kernel configuration ====="
 
@@ -405,15 +358,10 @@ jobs:
 
           echo "===== Verify required configuration ====="
 
-          grep -E '^(CONFIG_KSU|CONFIG_KSU_SUSFS)=' out/.config
+          grep -E '^CONFIG_KSU=' out/.config
 
           grep -qx 'CONFIG_KSU=y' out/.config || {
             echo "::error::CONFIG_KSU is not enabled after olddefconfig"
-            exit 1
-          }
-
-          grep -qx 'CONFIG_KSU_SUSFS=y' out/.config || {
-            echo "::error::CONFIG_KSU_SUSFS is not enabled after olddefconfig"
             exit 1
           }
 
@@ -426,7 +374,7 @@ jobs:
           command -v clang
           clang --version | head -n 1
 
-          echo "SukiSU Nova + SUSFS configuration validation passed."
+          echo "SukiSU Nova configuration validation passed (SUSFS intentionally disabled)."
 
       # 7. Build kernel
       - name: Build kernel
