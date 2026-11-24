@@ -265,6 +265,68 @@ jobs:
           fi
           echo "SUSFS header is conditional; SUSFS remains disabled."
 
+          echo "===== Apply verified Linux 4.19 SukiSU compatibility fixes ====="
+          python3 - <<'PY'
+          from pathlib import Path
+
+          root = Path("drivers/kernelsu").resolve()
+
+          preinit = root / "preinit/common/preinit.h"
+          text = preinit.read_text()
+          before = """#if !defined(CONFIG_ARM64) || !defined(KSU_CAN_USE_JUMP_LABEL)
+          #define KSU_NO_PREINIT
+          #endif"""
+          after = """#if !defined(CONFIG_ARM64) || !defined(KSU_CAN_USE_JUMP_LABEL)
+          #ifndef KSU_NO_PREINIT
+          #define KSU_NO_PREINIT
+          #endif
+          #endif"""
+          if before in text:
+              text = text.replace(before, after, 1)
+          elif after not in text:
+              raise SystemExit("Cannot safely patch preinit.h: expected block not found")
+          preinit.write_text(text)
+
+          kpm = root / "extension/kpm/kpm.c"
+          text = kpm.read_text()
+          before = "if (!access_ok(u64_to_user_ptr(cmd.result_code), sizeof(result))) return -EFAULT;"
+          after = """#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 0, 0)
+              if (!access_ok(u64_to_user_ptr(cmd.result_code), sizeof(result))) return -EFAULT;
+          #else
+              if (!access_ok(VERIFY_WRITE, u64_to_user_ptr(cmd.result_code), sizeof(result))) return -EFAULT;
+          #endif"""
+          if before in text:
+              text = text.replace(before, after, 1)
+          elif after not in text:
+              raise SystemExit("Cannot safely patch kpm.c: expected access_ok call not found")
+          kpm.write_text(text)
+
+          rules = root / "selinux/rules.c"
+          text = rules.read_text()
+          before = """void apply_kernelsu_rules(void)
+          {
+              struct selinux_policy *pol, *old_pol;
+              struct policydb *db;"""
+          after = """void apply_kernelsu_rules(void)
+          {
+          #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)
+              struct selinux_policy *pol, *old_pol;
+          #endif
+              struct policydb *db;"""
+          if before in text:
+              text = text.replace(before, after, 1)
+          elif after not in text:
+              raise SystemExit("Cannot safely patch rules.c: expected declarations not found")
+          rules.write_text(text)
+
+          print("Applied preinit macro, access_ok API, and SELinux unused-variable compatibility fixes.")
+          PY
+
+          echo "===== Verify Linux 4.19 compatibility patch markers ====="
+          grep -n -A4 -B2 'KSU_NO_PREINIT' "$KSU_DIR/preinit/common/preinit.h"
+          grep -n -A5 -B2 'access_ok' "$KSU_DIR/extension/kpm/kpm.c"
+          grep -n -A6 'void apply_kernelsu_rules' "$KSU_DIR/selinux/rules.c"
+
           echo "========== A. SukiSU sucompat.h =========="
           sed -n '1,100p' drivers/kernelsu/feature/sucompat.h
 
