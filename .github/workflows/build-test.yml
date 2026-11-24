@@ -364,8 +364,8 @@ jobs:
 
           echo "===== Enable SukiSU Nova (SUSFS temporarily disabled) ====="
 
-          scripts/config --file out/.config \\
-            --enable KSU \\
+          scripts/config --file out/.config \
+            --enable KSU \
             --disable KSU_SUSFS
 
           echo "===== Resolve kernel configuration ====="
