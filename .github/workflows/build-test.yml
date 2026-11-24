@@ -565,10 +565,29 @@ jobs:
             CROSS_COMPILE=aarch64-linux-gnu- \
             olddefconfig
 
+          # olddefconfig may leave generated auto.conf stale after direct .config edits.
+          # Explicitly synchronize Kconfig outputs before asking scripts/setlocalversion.
+          echo "===== Synchronize generated kernel configuration ====="
+          make O=out ARCH=arm64 \
+            LLVM=1 LLVM_IAS=1 \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            syncconfig
+
           echo "===== Verify resolved localversion config ====="
           grep -E '^CONFIG_LOCALVERSION=|^# CONFIG_LOCALVERSION_AUTO is not set' out/.config
           grep -qx 'CONFIG_LOCALVERSION="-SakuraJimaMai"' out/.config
           grep -qx '# CONFIG_LOCALVERSION_AUTO is not set' out/.config
+
+          echo "===== Verify generated auto.conf localversion config ====="
+          grep -E '^CONFIG_LOCALVERSION=|^CONFIG_LOCALVERSION_AUTO=' out/include/config/auto.conf
+          grep -qx 'CONFIG_LOCALVERSION="-SakuraJimaMai"' out/include/config/auto.conf || {
+            echo "::error::auto.conf has an unexpected CONFIG_LOCALVERSION"
+            exit 1
+          }
+          grep -qx 'CONFIG_LOCALVERSION_AUTO=n' out/include/config/auto.conf || {
+            echo "::error::auto.conf still enables CONFIG_LOCALVERSION_AUTO"
+            exit 1
+          }
 
           echo "===== Diagnose kernel release inputs ====="
           echo "--- out/.config ---"
