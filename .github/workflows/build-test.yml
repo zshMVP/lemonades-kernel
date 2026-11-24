@@ -570,6 +570,37 @@ jobs:
           grep -qx 'CONFIG_LOCALVERSION="-SakuraJimaMai"' out/.config
           grep -qx '# CONFIG_LOCALVERSION_AUTO is not set' out/.config
 
+          echo "===== Diagnose kernel release inputs ====="
+          echo "--- out/.config ---"
+          grep -E '^(CONFIG_LOCALVERSION=|# CONFIG_LOCALVERSION_AUTO is not set|CONFIG_LOCALVERSION_AUTO=)' out/.config || true
+
+          echo "--- out/include/config/auto.conf ---"
+          if [ -f out/include/config/auto.conf ]; then
+            grep -E '^CONFIG_LOCALVERSION=|^CONFIG_LOCALVERSION_AUTO=' out/include/config/auto.conf || true
+          else
+            echo "::warning::out/include/config/auto.conf does not exist"
+          fi
+
+          echo "--- localversion files in source/build roots ---"
+          find . out -maxdepth 1 -type f -name 'localversion*' -print -exec sh -c '
+            for file do
+              echo "### $file"
+              cat "$file"
+              echo
+            done
+          ' sh {} +
+
+          echo "--- .scmversion ---"
+          if [ -f .scmversion ]; then
+            ls -l .scmversion
+            od -An -tx1c .scmversion
+          else
+            echo "::warning::.scmversion is missing"
+          fi
+
+          echo "--- version-related environment ---"
+          env | sort | grep -E '^(LOCALVERSION|KERNELRELEASE|KBUILD|ARCH|CROSS_COMPILE)=' || true
+
           echo "===== Verify actual kernel release name ====="
           KERNEL_RELEASE="$(make -s O=out ARCH=arm64 kernelrelease)"
           echo "$KERNEL_RELEASE"
