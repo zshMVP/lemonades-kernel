@@ -267,7 +267,7 @@ jobs:
           sed -n '308,410p' kernel/reboot.c
 
           echo "========== Q. Kernel syscall headers =========="
-          grep -n -E 'linux/.*ksu|ksu' fs/exec.c fs/open.c fs/stat.c kernel/reboot.c
+          grep -n -E 'linux/.*ksu|ksu' fs/exec.c fs/open.c fs/stat.c kernel/reboot.c || true
 
       # 5. Configure kernel      
       - name: Configure kernel
