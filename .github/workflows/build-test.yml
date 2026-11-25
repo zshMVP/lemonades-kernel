@@ -584,10 +584,12 @@ jobs:
             echo "::error::auto.conf has an unexpected CONFIG_LOCALVERSION"
             exit 1
           }
-          grep -qx 'CONFIG_LOCALVERSION_AUTO=n' out/include/config/auto.conf || {
-            echo "::error::auto.conf still enables CONFIG_LOCALVERSION_AUTO"
+          # Kconfig omits disabled bool symbols from auto.conf; only y is emitted.
+          if grep -q '^CONFIG_LOCALVERSION_AUTO=' out/include/config/auto.conf; then
+            echo "::error::auto.conf unexpectedly enables CONFIG_LOCALVERSION_AUTO:"
+            grep '^CONFIG_LOCALVERSION_AUTO=' out/include/config/auto.conf
             exit 1
-          }
+          fi
 
           echo "===== Diagnose kernel release inputs ====="
           echo "--- out/.config ---"
