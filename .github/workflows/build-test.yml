@@ -390,29 +390,8 @@ jobs:
           #endif
           \terror = vfs_fstatat(dfd, filename, &stat, flag);""",
               "newfstatat")
-          patch_once("fs/stat.c",
-              """\tif (!error)
-          \t\terror = cp_new_stat(&stat, statbuf);
-
-          \treturn error;
-          }
-
-          static int do_readlinkat""",
-              """\tif (!error)
-          \t\terror = cp_new_stat(&stat, statbuf);
-
-          #if defined(CONFIG_KSU) && !defined(CONFIG_KSU_KPROBES_KSUD)
-          #pragma GCC diagnostic push
-          #pragma GCC diagnostic ignored "-Wdeclaration-after-statement"
-          \textern void ksu_handle_newfstat_ret(unsigned int *, struct stat __user **);
-          \tksu_handle_newfstat_ret(&fd, &statbuf);
-          #pragma GCC diagnostic pop
-          #endif
-          \treturn error;
-          }
-
-          static int do_readlinkat""",
-              "newfstat-return")
+          # SukiSU Nova does not export ksu_handle_newfstat_ret().
+          # The supported Android stat hook is ksu_handle_stat() on newfstatat above.
           patch_once("kernel/reboot.c",
               """SYSCALL_DEFINE4(reboot, int, magic1, int, magic2, unsigned int, cmd,
           \t\tvoid __user *, arg)
@@ -439,7 +418,7 @@ jobs:
           grep -n 'ksu_handle_execveat' fs/exec.c
           grep -n 'ksu_handle_faccessat' fs/open.c
           grep -n 'ksu_handle_stat' fs/stat.c
-          grep -n 'ksu_handle_newfstat_ret' fs/stat.c
+          ! grep -q 'ksu_handle_newfstat_ret' fs/stat.c
           grep -n 'ksu_handle_sys_reboot' kernel/reboot.c
 
           echo "========== A. SukiSU sucompat.h =========="
